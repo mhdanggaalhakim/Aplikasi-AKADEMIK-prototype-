@@ -16,8 +16,8 @@ class _NilaiPageState extends State<NilaiPage> {
 
   List<Map<String, dynamic>> listNilai = [];
   List<Map<String, dynamic>> listMahasiswa = [];
-  List<Map<String, dynamic>> listMataKuliah = [];
-  List<Map<String, dynamic>> listKrs = [];
+  List<Map<String, dynamic>> listMataKuliah =
+      []; // untuk dosen: cuma mk yg diampu
 
   bool isLoading = true;
   bool isSaving = false;
@@ -40,79 +40,72 @@ class _NilaiPageState extends State<NilaiPage> {
   Future<void> getData() async {
     setState(() => isLoading = true);
     try {
-      // 1. AMBIL DATA NILAI UTAMA
+      // Dosen hanya boleh melihat & input nilai utk mata kuliah yg dia ampu
+      // (dicek dari jadwal mengajarnya), dihitung DULU sebelum ambil nilai.
+      Set<String> allowedMkIds = {};
+
+      if (canInput) {
+        final mhsSnap = await _firestore
+            .collection('users')
+            .where('role', isEqualTo: 'mahasiswa')
+            .where('isActive', isEqualTo: true)
+            .get();
+        listMahasiswa = mhsSnap.docs.map((doc) {
+          final data = doc.data();
+          data['id'] = doc.id;
+          return data;
+        }).toList();
+
+        if (isAdmin) {
+          final mkSnap = await _firestore.collection('mata_kuliah').get();
+          listMataKuliah = mkSnap.docs.map((doc) {
+            final data = doc.data();
+            data['id'] = doc.id;
+            return data;
+          }).toList();
+        } else if (isDosen && widget.userId != null) {
+          final jadwalSnap = await _firestore
+              .collection('jadwal')
+              .where('dosenId', isEqualTo: widget.userId)
+              .get();
+          final mkMap = <String, Map<String, dynamic>>{};
+          for (var doc in jadwalSnap.docs) {
+            final d = doc.data();
+            final id = _s(d['mataKuliahId']);
+            if (id.isNotEmpty) {
+              allowedMkIds.add(id);
+              mkMap[id] = {
+                'id': id,
+                'kodeMk': '',
+                'namaMk': _s(d['mataKuliahNama']),
+              };
+            }
+          }
+          listMataKuliah = mkMap.values.toList();
+        }
+      }
+
       Query<Map<String, dynamic>> q = _firestore.collection('nilai');
       if (isMahasiswa && widget.userId != null) {
         q = q.where('mahasiswaId', isEqualTo: widget.userId);
       }
       final nilaiSnap = await q.get();
-      var nilai = nilaiSnap.docs
-          .map((doc) => {...doc.data(), 'id': doc.id})
-          .toList();
+      var nilai = nilaiSnap.docs.map((doc) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        return data;
+      }).toList();
 
-      // Filter khusus Dosen: Hanya tampilkan nilai dari MK yang diampu
-      Set<String> mkDiampu = {};
-      if (isDosen && widget.userId != null) {
-        final jadwalSnap = await _firestore
-            .collection('jadwal')
-            .where('dosenId', isEqualTo: widget.userId)
-            .get();
-        mkDiampu = jadwalSnap.docs.map((d) => _s(d['mataKuliahId'])).toSet();
-
+      // Filter di sisi client: dosen hanya lihat nilai mata kuliah yg dia ampu
+      if (isDosen) {
         nilai = nilai
-            .where((n) => mkDiampu.contains(_s(n['mataKuliahId'])))
+            .where((n) => allowedMkIds.contains(_s(n['mataKuliahId'])))
             .toList();
       }
 
       nilai.sort(
         (a, b) => _s(a['mahasiswaNama']).compareTo(_s(b['mahasiswaNama'])),
       );
-
-      // 2. SIAPKAN DROPDOWN MAHASISWA & MATA KULIAH UNTUK INPUT FORM
-      if (canInput) {
-        if (isAdmin) {
-          final mhsSnap = await _firestore
-              .collection('users')
-              .where('role', isEqualTo: 'mahasiswa')
-              .where('isActive', isEqualTo: true)
-              .get();
-          listMahasiswa = mhsSnap.docs
-              .map((doc) => {...doc.data(), 'id': doc.id})
-              .toList();
-
-          final mkSnap = await _firestore.collection('mata_kuliah').get();
-          listMataKuliah = mkSnap.docs
-              .map((doc) => {...doc.data(), 'id': doc.id})
-              .toList();
-        } else if (isDosen && widget.userId != null) {
-          final mkSnap = await _firestore.collection('mata_kuliah').get();
-          var allMk = mkSnap.docs
-              .map((doc) => {...doc.data(), 'id': doc.id})
-              .toList();
-
-          final krsSnap = await _firestore
-              .collection('krs')
-              .where('status', isEqualTo: 'disetujui')
-              .get();
-          listKrs = krsSnap.docs
-              .map((doc) => {...doc.data(), 'id': doc.id})
-              .toList();
-
-          listMataKuliah = allMk
-              .where((mk) => mkDiampu.contains(mk['id']))
-              .toList();
-
-          final mhsSnap = await _firestore
-              .collection('users')
-              .where('role', isEqualTo: 'mahasiswa')
-              .where('isActive', isEqualTo: true)
-              .get();
-          listMahasiswa = mhsSnap.docs
-              .map((doc) => {...doc.data(), 'id': doc.id})
-              .toList();
-        }
-      }
-
       setState(() => listNilai = nilai);
     } catch (e) {
       _snack("Gagal mengambil data: $e", Colors.red);
@@ -139,6 +132,7 @@ class _NilaiPageState extends State<NilaiPage> {
     );
   }
 
+  // Bobot: Tugas 30% + UTS 30% + UAS 40%
   double _hitungAkhir(num tugas, num uts, num uas) {
     return (tugas * 0.3) + (uts * 0.3) + (uas * 0.4);
   }
@@ -166,6 +160,9 @@ class _NilaiPageState extends State<NilaiPage> {
     }
   }
 
+  // ══════════════════════════════════════════════
+  // TAMBAH / EDIT NILAI
+  // ══════════════════════════════════════════════
   void showFormDialog({Map<String, dynamic>? item}) {
     final isEdit = item != null;
     String? selectedMhsId = isEdit ? _s(item['mahasiswaId']) : null;
@@ -177,232 +174,179 @@ class _NilaiPageState extends State<NilaiPage> {
     showDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          // Logika untuk drop-down mahasiswa
-          List<Map<String, dynamic>> availableMhs = listMahasiswa;
-          if (isDosen && selectedMkId != null) {
-            final mhsIdsValid = listKrs
-                .where((k) => _s(k['mataKuliahId']) == selectedMkId)
-                .map((k) => _s(k['mahasiswaId']))
-                .toSet();
-
-            availableMhs = listMahasiswa
-                .where((m) => mhsIdsValid.contains(m['id']))
-                .toList();
-          }
-
-          return Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
-              child: Padding(
-                padding: const EdgeInsets.all(22),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.add_box, color: Color(0xFF3F51B5)),
-                          const SizedBox(width: 8),
-                          Text(
-                            isEdit ? "Edit Nilai" : "Input Nilai",
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1A237E),
-                            ),
+        builder: (dialogContext, setDialogState) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          isEdit ? Icons.edit : Icons.add_box,
+                          color: const Color(0xFF2E7D32),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          isEdit ? "Edit Nilai" : "Input Nilai",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1A237E),
                           ),
-                        ],
-                      ),
-                      const Divider(height: 20),
-
-                      DropdownButtonFormField<String>(
-                        initialValue:
-                            selectedMkId, // <-- GANTI DARI value MENJADI initialValue
-                        decoration: _dec(
-                          "1. Pilih Mata Kuliah",
-                          Icons.menu_book,
                         ),
-                        items: listMataKuliah.map((mk) {
-                          final label = _s(mk['kodeMk']).isNotEmpty
-                              ? "${_s(mk['kodeMk'])} - ${_s(mk['namaMk'])}"
-                              : _s(mk['namaMk']);
-                          return DropdownMenuItem(
-                            value: mk['id'].toString(),
-                            child: Text(label, overflow: TextOverflow.ellipsis),
-                          );
-                        }).toList(),
-                        onChanged: isEdit
-                            ? null
-                            : (v) => setDialogState(() {
-                                selectedMkId = v;
-                                selectedMhsId = null;
-                              }),
-                      ),
-                      const SizedBox(height: 12),
+                      ],
+                    ),
+                    const Divider(height: 20),
 
-                      DropdownButtonFormField<String>(
-                        initialValue:
-                            selectedMhsId, // <-- GANTI DARI value MENJADI initialValue
-                        decoration: _dec("2. Pilih Mahasiswa", Icons.person),
-                        hint: Text(
-                          selectedMkId == null
-                              ? "Pilih Mata Kuliah dulu"
-                              : "Pilih Mahasiswa",
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        items: selectedMkId == null && isDosen
-                            ? []
-                            : availableMhs.map((m) {
-                                return DropdownMenuItem(
-                                  value: m['id'].toString(),
-                                  child: Text(
-                                    "${_s(m['nim'])} - ${_s(m['nama'])}",
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                );
-                              }).toList(),
-                        onChanged: isEdit
-                            ? null
-                            : (v) => setDialogState(() => selectedMhsId = v),
-                      ),
-
-                      if (isDosen &&
-                          selectedMkId != null &&
-                          availableMhs.isEmpty &&
-                          !isEdit)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4, bottom: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedMhsId,
+                      decoration: _dec("Mahasiswa", Icons.person),
+                      items: listMahasiswa.map((m) {
+                        return DropdownMenuItem(
+                          value: m['id'].toString(),
                           child: Text(
-                            "Tidak ada mahasiswa dengan KRS disetujui di mata kuliah ini.",
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.red.shade700,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            "${_s(m['nim'])} - ${_s(m['nama'])}",
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        )
-                      else
-                        const SizedBox(height: 12),
+                        );
+                      }).toList(),
+                      onChanged: isEdit
+                          ? null
+                          : (v) => setDialogState(() => selectedMhsId = v),
+                    ),
+                    const SizedBox(height: 12),
 
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _fieldNum(cTugas, "Tugas", Icons.assignment),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _fieldNum(cUts, "UTS", Icons.edit_document),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(child: _fieldNum(cUas, "UAS", Icons.school)),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "Bobot: Tugas 30% + UTS 30% + UAS 40%. Nilai 0-100.",
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey.shade500,
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedMkId,
+                      decoration: _dec("Mata Kuliah", Icons.menu_book),
+                      items: listMataKuliah.map((mk) {
+                        final label = _s(mk['kodeMk']).isNotEmpty
+                            ? "${_s(mk['kodeMk'])} - ${_s(mk['namaMk'])}"
+                            : _s(mk['namaMk']);
+                        return DropdownMenuItem(
+                          value: mk['id'].toString(),
+                          child: Text(label, overflow: TextOverflow.ellipsis),
+                        );
+                      }).toList(),
+                      onChanged: isEdit
+                          ? null
+                          : (v) => setDialogState(() => selectedMkId = v),
+                    ),
+                    const SizedBox(height: 12),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _fieldNum(cTugas, "Tugas", Icons.assignment),
                         ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _fieldNum(cUts, "UTS", Icons.edit_document),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(child: _fieldNum(cUas, "UAS", Icons.school)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Bobot: Tugas 30% + UTS 30% + UAS 40%. Nilai 0-100.",
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
                       ),
+                    ),
 
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: isSaving
-                                ? null
-                                : () => Navigator.pop(dialogContext),
-                            child: const Text("Batal"),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF3F51B5),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: isSaving
+                              ? null
+                              : () => Navigator.pop(dialogContext),
+                          child: const Text("Batal"),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2E7D32),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                            onPressed: isSaving
-                                ? null
-                                : () async {
-                                    if (selectedMhsId == null ||
-                                        selectedMkId == null) {
-                                      _snack(
-                                        "Mahasiswa & mata kuliah wajib dipilih",
-                                        Colors.orange,
-                                      );
-                                      return;
-                                    }
-                                    setDialogState(() => isSaving = true);
-
-                                    final mhs = availableMhs.firstWhere(
-                                      (m) => m['id'] == selectedMhsId,
-                                      orElse: () => {
-                                        'nama': _s(item?['mahasiswaNama']),
-                                      },
-                                    );
-
-                                    final mk = listMataKuliah.firstWhere(
-                                      (m) => m['id'] == selectedMkId,
-                                      orElse: () => {
-                                        'namaMk': _s(item?['mataKuliahNama']),
-                                        'semester': _s(item?['semester']),
-                                        'sks': _n(item?['sks']),
-                                      },
-                                    );
-
-                                    final ok = isEdit
-                                        ? await update(
-                                            id: item['id'].toString(),
-                                            tugas: cTugas.text.trim(),
-                                            uts: cUts.text.trim(),
-                                            uas: cUas.text.trim(),
-                                          )
-                                        : await tambah(
-                                            mhsId: selectedMhsId!,
-                                            mhsNama: _s(mhs['nama']),
-                                            mkId: selectedMkId!,
-                                            mkNama: _s(mk['namaMk']),
-                                            semester: _s(mk['semester']),
-                                            sks: _n(mk['sks']).toInt(),
-                                            tugas: cTugas.text.trim(),
-                                            uts: cUts.text.trim(),
-                                            uas: cUas.text.trim(),
-                                          );
-                                    setDialogState(() => isSaving = false);
-                                    if (ok && dialogContext.mounted) {
-                                      Navigator.pop(dialogContext);
-                                    }
-                                  },
-                            icon: isSaving
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.save, size: 16),
-                            label: const Text("Simpan"),
                           ),
-                        ],
-                      ),
-                    ],
-                  ),
+                          onPressed: isSaving
+                              ? null
+                              : () async {
+                                  if (selectedMhsId == null ||
+                                      selectedMkId == null) {
+                                    _snack(
+                                      "Mahasiswa & mata kuliah wajib dipilih",
+                                      Colors.orange,
+                                    );
+                                    return;
+                                  }
+                                  setDialogState(() => isSaving = true);
+                                  final mhs = listMahasiswa.firstWhere(
+                                    (m) => m['id'] == selectedMhsId,
+                                    orElse: () => {
+                                      'nama': _s(item?['mahasiswaNama']),
+                                    },
+                                  );
+                                  final mk = listMataKuliah.firstWhere(
+                                    (m) => m['id'] == selectedMkId,
+                                    orElse: () => {
+                                      'namaMk': _s(item?['mataKuliahNama']),
+                                    },
+                                  );
+                                  final ok = isEdit
+                                      ? await update(
+                                          id: item['id'].toString(),
+                                          tugas: cTugas.text.trim(),
+                                          uts: cUts.text.trim(),
+                                          uas: cUas.text.trim(),
+                                        )
+                                      : await tambah(
+                                          mhsId: selectedMhsId!,
+                                          mhsNama: _s(mhs['nama']),
+                                          mkId: selectedMkId!,
+                                          mkNama: _s(mk['namaMk']),
+                                          tugas: cTugas.text.trim(),
+                                          uts: cUts.text.trim(),
+                                          uas: cUas.text.trim(),
+                                        );
+                                  setDialogState(() => isSaving = false);
+                                  if (ok && dialogContext.mounted)
+                                    Navigator.pop(dialogContext);
+                                },
+                          icon: isSaving
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.save, size: 16),
+                          label: const Text("Simpan"),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -417,8 +361,6 @@ class _NilaiPageState extends State<NilaiPage> {
     required String mhsNama,
     required String mkId,
     required String mkNama,
-    required String semester,
-    required int sks,
     required String tugas,
     required String uts,
     required String uas,
@@ -427,9 +369,6 @@ class _NilaiPageState extends State<NilaiPage> {
       _snack("Nilai harus berupa angka 0-100", Colors.orange);
       return false;
     }
-
-    final fixSemester = semester.isEmpty ? "1" : semester;
-
     try {
       final check = await _firestore
           .collection('nilai')
@@ -455,8 +394,6 @@ class _NilaiPageState extends State<NilaiPage> {
         'mataKuliahId': mkId,
         'mataKuliahNama': mkNama,
         'dosenId': isDosen ? widget.userId : null,
-        'semester': fixSemester,
-        'sks': sks,
         'tugas': t,
         'uts': u,
         'uas': a,
@@ -551,9 +488,7 @@ class _NilaiPageState extends State<NilaiPage> {
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 800;
     final data = filtered;
-    final title = isMahasiswa
-        ? "Nilai / Transkrip"
-        : (isDosen ? "Input Nilai" : "Data Nilai (Admin)");
+    final title = isMahasiswa ? "Nilai / Transkrip" : "Nilai";
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F8),
@@ -568,20 +503,15 @@ class _NilaiPageState extends State<NilaiPage> {
       ),
       floatingActionButton: canInput
           ? FloatingActionButton.extended(
-              onPressed: () {
-                if (listMataKuliah.isEmpty) {
-                  _snack(
-                    isDosen
-                        ? "Anda belum ditugaskan mengajar (Cek Penjadwalan)"
-                        : "Data mata kuliah kosong",
-                    Colors.orange,
-                  );
-                } else {
-                  showFormDialog();
-                }
-              },
-              backgroundColor: const Color(0xFF3F51B5),
-              foregroundColor: Colors.white,
+              onPressed: (listMahasiswa.isEmpty || listMataKuliah.isEmpty)
+                  ? () => _snack(
+                      isDosen
+                          ? "Kamu belum ditugaskan mengajar mata kuliah apapun (cek Penjadwalan)"
+                          : "Tambahkan Data Mahasiswa & Mata Kuliah dulu",
+                      Colors.orange,
+                    )
+                  : () => showFormDialog(),
+              backgroundColor: const Color(0xFF2E7D32),
               icon: const Icon(Icons.add),
               label: const Text("Input Nilai"),
             )
@@ -610,14 +540,10 @@ class _NilaiPageState extends State<NilaiPage> {
                     hintText: isMahasiswa
                         ? "Cari mata kuliah..."
                         : "Cari mahasiswa, mata kuliah...",
-                    hintStyle: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
-                    ), // <-- GANTI DARI withOpacity
+                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
                     prefixIcon: const Icon(Icons.search, color: Colors.white),
                     filled: true,
-                    fillColor: Colors.white.withValues(
-                      alpha: 0.15,
-                    ), // <-- GANTI DARI withOpacity
+                    fillColor: Colors.white.withOpacity(0.15),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
@@ -644,26 +570,6 @@ class _NilaiPageState extends State<NilaiPage> {
     );
   }
 
-  // --- WIDGET PENDUKUNG ---
-
-  InputDecoration _dec(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(icon, color: const Color(0xFF3F51B5)),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-      filled: true,
-      fillColor: Colors.white,
-    );
-  }
-
-  Widget _fieldNum(TextEditingController c, String label, IconData icon) {
-    return TextFormField(
-      controller: c,
-      keyboardType: TextInputType.number,
-      decoration: _dec(label, icon),
-    );
-  }
-
   Widget _ipkChip(List<Map<String, dynamic>> data) {
     if (data.isEmpty) {
       return _statChip(Icons.grade, "-", "IPK");
@@ -677,107 +583,6 @@ class _NilaiPageState extends State<NilaiPage> {
         const SizedBox(width: 8),
         _statChip(Icons.grade, avg.toStringAsFixed(1), "Rata-rata"),
       ],
-    );
-  }
-
-  Widget _statChip(IconData icon, String val, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(
-          alpha: 0.2,
-        ), // <-- GANTI DARI withOpacity
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 16),
-          const SizedBox(width: 6),
-          Text(
-            "$val $label",
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // GANTI NAMA DARI _H KE _headerText AGAR SESUAI ATURAN camelCase
-  Widget _headerText(String text) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontWeight: FontWeight.bold,
-        color: Color(0xFF1A237E),
-        fontSize: 13,
-      ),
-    );
-  }
-
-  Widget _gradeBadge(String grade) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: _gradeColor(
-          grade,
-        ).withValues(alpha: 0.1), // <-- GANTI DARI withOpacity
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: _gradeColor(grade).withValues(alpha: 0.5),
-        ), // <-- GANTI DARI withOpacity
-      ),
-      child: Center(
-        child: Text(
-          grade,
-          style: TextStyle(
-            color: _gradeColor(grade),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _aksiBtn(
-    IconData icon,
-    Color color,
-    String tooltip,
-    VoidCallback onTap,
-  ) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1), // <-- GANTI DARI withOpacity
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: IconButton(
-        icon: Icon(icon, color: color, size: 18),
-        tooltip: tooltip,
-        onPressed: onTap,
-        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-        padding: EdgeInsets.zero,
-      ),
-    );
-  }
-
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.inbox, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          Text(
-            "Data masih kosong",
-            style: TextStyle(color: Colors.grey.shade600),
-          ),
-        ],
-      ),
     );
   }
 
@@ -796,18 +601,17 @@ class _NilaiPageState extends State<NilaiPage> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
               child: Row(
                 children: [
-                  // SEMUA KATA KUNCI 'const' DI WIDGET LUAR DIHAPUS KARENA MEMANGGIL METHOD '_headerText()'
-                  SizedBox(width: 40, child: _headerText("No")),
+                  const SizedBox(width: 40, child: _H("No")),
                   const SizedBox(width: 16),
                   if (!isMahasiswa)
-                    Expanded(flex: 3, child: _headerText("Mahasiswa")),
-                  Expanded(flex: 3, child: _headerText("Mata Kuliah")),
-                  Expanded(flex: 1, child: _headerText("Tugas")),
-                  Expanded(flex: 1, child: _headerText("UTS")),
-                  Expanded(flex: 1, child: _headerText("UAS")),
-                  Expanded(flex: 1, child: _headerText("Akhir")),
-                  SizedBox(width: 60, child: _headerText("Grade")),
-                  if (canInput) SizedBox(width: 80, child: _headerText("Aksi")),
+                    const Expanded(flex: 3, child: _H("Mahasiswa")),
+                  Expanded(flex: 3, child: const _H("Mata Kuliah")),
+                  const Expanded(flex: 1, child: _H("Tugas")),
+                  const Expanded(flex: 1, child: _H("UTS")),
+                  const Expanded(flex: 1, child: _H("UAS")),
+                  const Expanded(flex: 1, child: _H("Akhir")),
+                  const SizedBox(width: 60, child: _H("Grade")),
+                  if (canInput) const SizedBox(width: 80, child: _H("Aksi")),
                 ],
               ),
             ),
@@ -953,7 +757,6 @@ class _NilaiPageState extends State<NilaiPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: Column(
@@ -970,76 +773,196 @@ class _NilaiPageState extends State<NilaiPage> {
                           Text(
                             _s(item['mataKuliahNama']),
                             style: TextStyle(
-                              fontSize: 13,
-                              color: isMahasiswa
-                                  ? Colors.black87
-                                  : Colors.grey.shade700,
+                              fontSize: isMahasiswa ? 15 : 12,
                               fontWeight: isMahasiswa
                                   ? FontWeight.bold
                                   : FontWeight.normal,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            "T: ${_n(item['tugas'])} | UTS: ${_n(item['uts'])} | UAS: ${_n(item['uas'])}",
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.black54,
+                              color: isMahasiswa
+                                  ? Colors.black
+                                  : Colors.grey.shade600,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _gradeBadge(grade),
-                        const SizedBox(height: 4),
-                        Text(
-                          _n(item['nilaiAkhir']).toStringAsFixed(1),
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                if (canInput) ...[
-                  const Divider(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton.icon(
-                        icon: const Icon(
-                          Icons.edit_outlined,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
-                        label: const Text(
-                          "Edit",
-                          style: TextStyle(color: Colors.orange),
-                        ),
-                        onPressed: () => showFormDialog(item: item),
+                    _gradeBadge(grade),
+                    if (canInput) ...[
+                      _aksiBtn(
+                        Icons.edit_outlined,
+                        Colors.orange,
+                        "Edit",
+                        () => showFormDialog(item: item),
                       ),
-                      TextButton.icon(
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          size: 16,
-                          color: Colors.red,
-                        ),
-                        label: const Text(
-                          "Hapus",
-                          style: TextStyle(color: Colors.red),
-                        ),
-                        onPressed: () => hapus(item['id'].toString()),
+                      _aksiBtn(
+                        Icons.delete_outline,
+                        Colors.red,
+                        "Hapus",
+                        () => hapus(item['id'].toString()),
                       ),
                     ],
-                  ),
-                ],
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    _scoreBox("Tugas", _n(item['tugas'])),
+                    const SizedBox(width: 8),
+                    _scoreBox("UTS", _n(item['uts'])),
+                    const SizedBox(width: 8),
+                    _scoreBox("UAS", _n(item['uas'])),
+                    const SizedBox(width: 8),
+                    _scoreBox("Akhir", _n(item['nilaiAkhir']), highlight: true),
+                  ],
+                ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _scoreBox(String label, num value, {bool highlight = false}) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: highlight
+              ? const Color(0xFF3F51B5).withOpacity(0.08)
+              : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          children: [
+            Text(
+              value is double ? value.toStringAsFixed(1) : value.toString(),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                color: highlight ? const Color(0xFF3F51B5) : Colors.black87,
+              ),
+            ),
+            Text(
+              label,
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _gradeBadge(String grade) {
+    if (grade.isEmpty) return const SizedBox.shrink();
+    final color = _gradeColor(grade);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Text(
+        grade,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
+  Widget _statChip(IconData icon, String val, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 14),
+          const SizedBox(width: 6),
+          Text(
+            "$val $label",
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _aksiBtn(IconData icon, Color color, String tip, VoidCallback onTap) {
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          margin: const EdgeInsets.only(left: 4),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: color, size: 18),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.grade_outlined, size: 70, color: Colors.grey.shade300),
+          const SizedBox(height: 12),
+          Text(
+            isMahasiswa ? "Belum ada nilai" : "Belum ada data nilai",
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 15),
+          ),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _dec(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: const Color(0xFF2E7D32)),
+      border: const OutlineInputBorder(
+        borderRadius: BorderRadius.all(Radius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _fieldNum(TextEditingController c, String label, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: c,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: _dec(label, icon),
+      ),
+    );
+  }
+}
+
+class _H extends StatelessWidget {
+  final String text;
+  const _H(this.text);
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontWeight: FontWeight.bold,
+        color: Color(0xFF1A237E),
+        fontSize: 13,
+      ),
     );
   }
 }
