@@ -304,189 +304,235 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
     showDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.all(22),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          isEdit ? Icons.edit : Icons.add_box,
-                          color: const Color(0xFF3F51B5),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          isEdit ? "Edit Jadwal" : "Tambah Jadwal",
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1A237E),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 20),
+        builder: (dialogContext, setDialogState) {
+          // LOGIKA FILTER DOSEN:
+          // Ambil bidang keahlian dari mata kuliah yang sedang dipilih
+          List<Map<String, dynamic>> filteredDosen = listDosen;
+          if (selectedMkId != null) {
+            final mkTerpilih = listMataKuliah.firstWhere(
+              (mk) => mk['id'] == selectedMkId,
+              orElse: () => {},
+            );
 
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedMkId,
-                      decoration: _dec("Mata Kuliah", Icons.menu_book),
-                      items: listMataKuliah.map((mk) {
-                        return DropdownMenuItem(
-                          value: mk['id'].toString(),
-                          child: Text(
-                            "${_s(mk['kodeMk'])} - ${_s(mk['namaMk'])}",
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: (v) => setDialogState(() => selectedMkId = v),
-                    ),
-                    const SizedBox(height: 12),
+            // Asumsi field di database bernama 'bidangKeahlian'
+            final mkBidang = _s(mkTerpilih['bidangKeahlian']);
 
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedDosenId,
-                      decoration: _dec("Dosen Pengampu", Icons.school),
-                      items: listDosen.map((d) {
-                        return DropdownMenuItem(
-                          value: d['id'].toString(),
-                          child: Text(
-                            _s(d['nama']),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: (v) =>
-                          setDialogState(() => selectedDosenId = v),
-                    ),
-                    const SizedBox(height: 12),
+            if (mkBidang.isNotEmpty) {
+              filteredDosen = listDosen
+                  .where(
+                    (d) =>
+                        _s(d['bidangKeahlian']).toLowerCase() ==
+                        mkBidang.toLowerCase(),
+                  )
+                  .toList();
+            }
+          }
 
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedHari,
-                      decoration: _dec("Hari", Icons.calendar_today),
-                      items: _hariList
-                          .map(
-                            (h) => DropdownMenuItem(value: h, child: Text(h)),
-                          )
-                          .toList(),
-                      onChanged: (v) => setDialogState(
-                        () => selectedHari = v ?? _hariList.first,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _field(
-                            cJamMulai,
-                            "Jam Mulai (08:00)",
-                            Icons.access_time,
+          return Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Padding(
+                padding: const EdgeInsets.all(22),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            isEdit ? Icons.edit : Icons.add_box,
+                            color: const Color(0xFF3F51B5),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _field(
-                            cJamSelesai,
-                            "Jam Selesai (10:00)",
-                            Icons.access_time_filled,
-                          ),
-                        ),
-                      ],
-                    ),
-                    _field(cRuang, "Ruang", Icons.room),
-
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: isSaving
-                              ? null
-                              : () => Navigator.pop(dialogContext),
-                          child: const Text("Batal"),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF3F51B5),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                          const SizedBox(width: 8),
+                          Text(
+                            isEdit ? "Edit Jadwal" : "Tambah Jadwal",
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1A237E),
                             ),
                           ),
-                          onPressed: isSaving
-                              ? null
-                              : () async {
-                                  if (selectedMkId == null ||
-                                      selectedDosenId == null) {
-                                    _snack(
-                                      "Mata kuliah & dosen wajib dipilih",
-                                      Colors.orange,
-                                    );
-                                    return;
-                                  }
-                                  setDialogState(() => isSaving = true);
-                                  final mk = listMataKuliah.firstWhere(
-                                    (m) => m['id'] == selectedMkId,
-                                  );
-                                  final dosen = listDosen.firstWhere(
-                                    (d) => d['id'] == selectedDosenId,
-                                  );
-                                  final ok = isEdit
-                                      ? await update(
-                                          id: item['id'].toString(),
-                                          mkId: selectedMkId!,
-                                          mkNama: _s(mk['namaMk']),
-                                          dosenId: selectedDosenId!,
-                                          dosenNama: _s(dosen['nama']),
-                                          hari: selectedHari,
-                                          jamMulai: cJamMulai.text.trim(),
-                                          jamSelesai: cJamSelesai.text.trim(),
-                                          ruang: cRuang.text.trim(),
-                                        )
-                                      : await tambah(
-                                          mkId: selectedMkId!,
-                                          mkNama: _s(mk['namaMk']),
-                                          dosenId: selectedDosenId!,
-                                          dosenNama: _s(dosen['nama']),
-                                          hari: selectedHari,
-                                          jamMulai: cJamMulai.text.trim(),
-                                          jamSelesai: cJamSelesai.text.trim(),
-                                          ruang: cRuang.text.trim(),
-                                        );
-                                  setDialogState(() => isSaving = false);
-                                  if (ok && dialogContext.mounted)
-                                    Navigator.pop(dialogContext);
-                                },
-                          icon: isSaving
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.save, size: 16),
-                          label: const Text("Simpan"),
+                        ],
+                      ),
+                      const Divider(height: 20),
+
+                      // DROPDOWN MATA KULIAH
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedMkId,
+                        decoration: _dec("Mata Kuliah", Icons.menu_book),
+                        items: listMataKuliah.map((mk) {
+                          return DropdownMenuItem(
+                            value: mk['id'].toString(),
+                            child: Text(
+                              "${_s(mk['kodeMk'])} - ${_s(mk['namaMk'])}",
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (v) {
+                          setDialogState(() {
+                            selectedMkId = v;
+                            // Reset dosen jika mata kuliah diganti
+                            selectedDosenId = null;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      // DROPDOWN DOSEN PENGAMPU (TERFILTER)
+                      DropdownButtonFormField<String>(
+                        value: selectedDosenId,
+                        decoration: _dec("Dosen Pengampu", Icons.school),
+                        items: filteredDosen.map((d) {
+                          String dNama = _s(d['nama']);
+                          String dBidang = _s(d['bidangKeahlian']);
+                          String labelText = dBidang.isNotEmpty
+                              ? "$dNama ($dBidang)"
+                              : dNama;
+
+                          return DropdownMenuItem(
+                            value: d['id'].toString(),
+                            child: Text(
+                              labelText,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (v) =>
+                            setDialogState(() => selectedDosenId = v),
+                        hint: Text(
+                          selectedMkId == null
+                              ? "Pilih Mata Kuliah dulu"
+                              : (filteredDosen.isEmpty
+                                    ? "Tidak ada dosen di bidang ini"
+                                    : "Pilih Dosen"),
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedHari,
+                        decoration: _dec("Hari", Icons.calendar_today),
+                        items: _hariList
+                            .map(
+                              (h) => DropdownMenuItem(value: h, child: Text(h)),
+                            )
+                            .toList(),
+                        onChanged: (v) => setDialogState(
+                          () => selectedHari = v ?? _hariList.first,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _field(
+                              cJamMulai,
+                              "Jam Mulai (08:00)",
+                              Icons.access_time,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _field(
+                              cJamSelesai,
+                              "Jam Selesai (10:00)",
+                              Icons.access_time_filled,
+                            ),
+                          ),
+                        ],
+                      ),
+                      _field(cRuang, "Ruang", Icons.room),
+
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: isSaving
+                                ? null
+                                : () => Navigator.pop(dialogContext),
+                            child: const Text("Batal"),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF3F51B5),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            onPressed: isSaving
+                                ? null
+                                : () async {
+                                    if (selectedMkId == null ||
+                                        selectedDosenId == null) {
+                                      _snack(
+                                        "Mata kuliah & dosen wajib dipilih",
+                                        Colors.orange,
+                                      );
+                                      return;
+                                    }
+                                    setDialogState(() => isSaving = true);
+                                    final mk = listMataKuliah.firstWhere(
+                                      (m) => m['id'] == selectedMkId,
+                                    );
+                                    final dosen = listDosen.firstWhere(
+                                      (d) => d['id'] == selectedDosenId,
+                                    );
+                                    final ok = isEdit
+                                        ? await update(
+                                            id: item['id'].toString(),
+                                            mkId: selectedMkId!,
+                                            mkNama: _s(mk['namaMk']),
+                                            dosenId: selectedDosenId!,
+                                            dosenNama: _s(dosen['nama']),
+                                            hari: selectedHari,
+                                            jamMulai: cJamMulai.text.trim(),
+                                            jamSelesai: cJamSelesai.text.trim(),
+                                            ruang: cRuang.text.trim(),
+                                          )
+                                        : await tambah(
+                                            mkId: selectedMkId!,
+                                            mkNama: _s(mk['namaMk']),
+                                            dosenId: selectedDosenId!,
+                                            dosenNama: _s(dosen['nama']),
+                                            hari: selectedHari,
+                                            jamMulai: cJamMulai.text.trim(),
+                                            jamSelesai: cJamSelesai.text.trim(),
+                                            ruang: cRuang.text.trim(),
+                                          );
+                                    setDialogState(() => isSaving = false);
+                                    if (ok && dialogContext.mounted)
+                                      Navigator.pop(dialogContext);
+                                  },
+                            icon: isSaving
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.save, size: 16),
+                            label: const Text("Simpan"),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -631,6 +677,7 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                     )
                   : () => showFormDialog(),
               backgroundColor: const Color(0xFF3F51B5),
+              foregroundColor: Colors.white, // Teks & icon jadi putih
               icon: const Icon(Icons.add),
               label: const Text("Tambah Jadwal"),
             )
