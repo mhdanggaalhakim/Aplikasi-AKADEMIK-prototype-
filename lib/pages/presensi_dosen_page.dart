@@ -8,7 +8,11 @@ class PresensiDosenPage extends StatefulWidget {
   final String mataKuliahId;
   final String mataKuliahNama;
 
-  const PresensiDosenPage({super.key, required this.mataKuliahId, required this.mataKuliahNama});
+  const PresensiDosenPage({
+    super.key,
+    required this.mataKuliahId,
+    required this.mataKuliahNama,
+  });
 
   @override
   State<PresensiDosenPage> createState() => _PresensiDosenPageState();
@@ -28,20 +32,29 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
 
   void _initDate() {
     final now = DateTime.now();
-    _todayStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+    _todayStr =
+        "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
     _hariStr = _getHari(now.weekday);
   }
 
   String _getHari(int weekday) {
     switch (weekday) {
-      case 1: return "Senin";
-      case 2: return "Selasa";
-      case 3: return "Rabu";
-      case 4: return "Kamis";
-      case 5: return "Jumat";
-      case 6: return "Sabtu";
-      case 7: return "Minggu";
-      default: return "";
+      case 1:
+        return "Senin";
+      case 2:
+        return "Selasa";
+      case 3:
+        return "Rabu";
+      case 4:
+        return "Kamis";
+      case 5:
+        return "Jumat";
+      case 6:
+        return "Sabtu";
+      case 7:
+        return "Minggu";
+      default:
+        return "";
     }
   }
 
@@ -60,19 +73,22 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
 
       if (snap.docs.isEmpty) {
         if (!mounted) return;
-        _showSnack("Belum ada mahasiswa yang diberi status absen hari ini.", Colors.orange);
+        _showSnack(
+          "Belum ada mahasiswa yang diberi status absen hari ini.",
+          Colors.orange,
+        );
         setState(() => _isPrinting = false);
         return;
       }
 
       // 2. Inisialisasi dokumen PDF berkas
       final pdf = pw.Document();
-      
+
       // Struktur tabel data PDF
       final List<List<String>> tableData = [
-        ['No', 'Nama Mahasiswa', 'Status Kehadiran']
+        ['No', 'Nama Mahasiswa', 'Status Kehadiran'],
       ];
-      
+
       for (int i = 0; i < snap.docs.length; i++) {
         final data = snap.docs[i].data();
         tableData.add([
@@ -90,31 +106,57 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
             return pw.Padding(
               padding: const pw.EdgeInsets.all(24),
               child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start, // [PERBAIKAN ERROR TYPO DISINI]
+                crossAxisAlignment: pw
+                    .CrossAxisAlignment
+                    .start, // [PERBAIKAN ERROR TYPO DISINI]
                 children: [
                   pw.Center(
                     child: pw.Text(
                       "LAPORAN PRESENSI MAHASISWA",
-                      style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+                      style: pw.TextStyle(
+                        fontSize: 18,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
                     ),
                   ),
                   pw.SizedBox(height: 20),
-                  pw.Text("Mata Kuliah : ${widget.mataKuliahNama}", style: const pw.TextStyle(fontSize: 12)),
-                  pw.Text("Hari / Tanggal : $_hariStr, $_todayStr", style: const pw.TextStyle(fontSize: 12)),
+                  pw.Text(
+                    "Mata Kuliah : ${widget.mataKuliahNama}",
+                    style: const pw.TextStyle(fontSize: 12),
+                  ),
+                  pw.Text(
+                    "Hari / Tanggal : $_hariStr, $_todayStr",
+                    style: const pw.TextStyle(fontSize: 12),
+                  ),
                   pw.SizedBox(height: 8),
                   pw.Divider(thickness: 1.5, color: PdfColors.grey300),
                   pw.SizedBox(height: 16),
-                  
+
                   // Tabel Generator Otomatis (Menggunakan TableHelper sesuai versi terbaru)
-                  pw.TableHelper.fromTextArray( // [PERBAIKAN WARNING DEPRECATED TABLE]
+                  pw.TableHelper.fromTextArray(
+                    // [PERBAIKAN WARNING DEPRECATED TABLE]
                     headers: tableData[0],
                     data: tableData.sublist(1),
-                    border: pw.TableBorder.all(width: 0.5, color: PdfColors.grey400),
-                    headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
-                    headerDecoration: const pw.BoxDecoration(color: PdfColors.indigo),
+                    border: pw.TableBorder.all(
+                      width: 0.5,
+                      color: PdfColors.grey400,
+                    ),
+                    headerStyle: pw.TextStyle(
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.white,
+                    ),
+                    headerDecoration: const pw.BoxDecoration(
+                      color: PdfColors.indigo,
+                    ),
                     cellAlignment: pw.Alignment.centerLeft,
-                    cellAlignments: {0: pw.Alignment.center, 2: pw.Alignment.center},
-                    cellPadding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    cellAlignments: {
+                      0: pw.Alignment.center,
+                      2: pw.Alignment.center,
+                    },
+                    cellPadding: const pw.EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                   ),
                 ],
               ),
@@ -138,7 +180,9 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
   }
 
   void _showSnack(String msg, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
   Stream<QuerySnapshot> get _mahasiswaStream => _firestore
@@ -152,7 +196,10 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       appBar: AppBar(
-        title: Text("Presensi: ${widget.mataKuliahNama}", style: const TextStyle(fontSize: 18)), 
+        title: Text(
+          "Presensi: ${widget.mataKuliahNama}",
+          style: const TextStyle(fontSize: 18),
+        ),
         backgroundColor: const Color(0xFF3F51B5),
         foregroundColor: Colors.white,
         actions: [
@@ -160,7 +207,14 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
           _isPrinting
               ? const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  ),
                 )
               : IconButton(
                   icon: const Icon(Icons.print),
@@ -175,11 +229,19 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.calendar_today, color: Colors.white70, size: 14),
+                const Icon(
+                  Icons.calendar_today,
+                  color: Colors.white70,
+                  size: 14,
+                ),
                 const SizedBox(width: 6),
                 Text(
                   "$_hariStr, $_todayStr",
-                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -189,11 +251,16 @@ class _PresensiDosenPageState extends State<PresensiDosenPage> {
       body: StreamBuilder<QuerySnapshot>(
         stream: _mahasiswaStream,
         builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text("Terjadi kesalahan: ${snapshot.error}"));
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          
+          if (snapshot.hasError)
+            return Center(child: Text("Terjadi kesalahan: ${snapshot.error}"));
+          if (!snapshot.hasData)
+            return const Center(child: CircularProgressIndicator());
+
           final docs = snapshot.data!.docs;
-          if (docs.isEmpty) return const Center(child: Text("Belum ada mahasiswa yang mengambil MK ini."));
+          if (docs.isEmpty)
+            return const Center(
+              child: Text("Belum ada mahasiswa yang mengambil MK ini."),
+            );
 
           return ListView.builder(
             padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
@@ -244,21 +311,32 @@ class _MahasiswaPresensiTile extends StatelessWidget {
       }, SetOptions(merge: true));
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Gagal: $e")));
     }
   }
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'Hadir': return Colors.green;
-      case 'Sakit': return Colors.blue;
-      case 'Izin': return Colors.orange;
-      case 'Alpa': return Colors.red;
-      default: return Colors.grey;
+      case 'Hadir':
+        return Colors.green;
+      case 'Sakit':
+        return Colors.blue;
+      case 'Izin':
+        return Colors.orange;
+      case 'Alpa':
+        return Colors.red;
+      default:
+        return Colors.grey;
     }
   }
 
-  Widget _buildButton(BuildContext context, String statusLabel, String currentStatus) {
+  Widget _buildButton(
+    BuildContext context,
+    String statusLabel,
+    String currentStatus,
+  ) {
     final isSelected = statusLabel == currentStatus;
     final color = _getStatusColor(statusLabel);
 
@@ -274,7 +352,10 @@ class _MahasiswaPresensiTile extends StatelessWidget {
         elevation: 0,
       ),
       onPressed: () => _catatPresensi(context, statusLabel),
-      child: Text(statusLabel, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+      child: Text(
+        statusLabel,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+      ),
     );
   }
 
@@ -283,7 +364,10 @@ class _MahasiswaPresensiTile extends StatelessWidget {
     final docId = "${mataKuliahId}_${mahasiswaId}_$todayStr";
 
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('presensi').doc(docId).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('presensi')
+          .doc(docId)
+          .snapshots(),
       builder: (context, snapshot) {
         String currentStatus = "";
         if (snapshot.hasData && snapshot.data!.exists) {
@@ -298,9 +382,11 @@ class _MahasiswaPresensiTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(
               // [PERBAIKAN WARNING DEPRECATED OPACITY KE WITHVALUES]
-              color: currentStatus.isNotEmpty ? _getStatusColor(currentStatus).withValues(alpha: 0.5) : Colors.transparent,
+              color: currentStatus.isNotEmpty
+                  ? _getStatusColor(currentStatus).withValues(alpha: 0.5)
+                  : Colors.transparent,
               width: 1.5,
-            )
+            ),
           ),
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -312,16 +398,35 @@ class _MahasiswaPresensiTile extends StatelessWidget {
                     CircleAvatar(
                       radius: 18,
                       // [PERBAIKAN WARNING DEPRECATED OPACITY KE WITHVALUES]
-                      backgroundColor: const Color(0xFF3F51B5).withValues(alpha: 0.1),
+                      backgroundColor: const Color(
+                        0xFF3F51B5,
+                      ).withValues(alpha: 0.1),
                       child: Text(
-                        mahasiswaNama.isNotEmpty ? mahasiswaNama[0].toUpperCase() : "?",
-                        style: const TextStyle(color: Color(0xFF3F51B5), fontWeight: FontWeight.bold),
+                        mahasiswaNama.isNotEmpty
+                            ? mahasiswaNama[0].toUpperCase()
+                            : "?",
+                        style: const TextStyle(
+                          color: Color(0xFF3F51B5),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(child: Text(mahasiswaNama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                    Expanded(
+                      child: Text(
+                        mahasiswaNama,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
                     if (currentStatus.isNotEmpty)
-                      Icon(Icons.check_circle, color: _getStatusColor(currentStatus), size: 18),
+                      Icon(
+                        Icons.check_circle,
+                        color: _getStatusColor(currentStatus),
+                        size: 18,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -334,12 +439,12 @@ class _MahasiswaPresensiTile extends StatelessWidget {
                     _buildButton(context, "Izin", currentStatus),
                     _buildButton(context, "Alpa", currentStatus),
                   ],
-                )
+                ),
               ],
             ),
           ),
         );
-      }
+      },
     );
   }
 }

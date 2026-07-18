@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'presensi_dosen_page.dart'; // Menghubungkan ke halaman presensi dosen yang baru
 
 class PenjadwalanPage extends StatefulWidget {
   final String role; // admin | dosen | mahasiswa
@@ -25,10 +26,6 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
   List<Map<String, dynamic>> listJadwal = [];
   List<Map<String, dynamic>> listMataKuliah = [];
   List<Map<String, dynamic>> listDosen = [];
-
-  // jadwalId -> data sesi hari ini (kalau ada)
-  Map<String, Map<String, dynamic>> sesiHariIni = {};
-  final Set<String> processingSesi = {};
 
   bool isLoading = true;
   bool isSaving = false;
@@ -103,165 +100,11 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
         }).toList();
       }
 
-      if (isDosen && widget.userId != null) {
-        final today = _tanggalHariIni();
-        final sesiSnap = await _firestore
-            .collection('sesi_perkuliahan')
-            .where('dosenId', isEqualTo: widget.userId)
-            .where('tanggal', isEqualTo: today)
-            .get();
-        final map = <String, Map<String, dynamic>>{};
-        for (var doc in sesiSnap.docs) {
-          final d = doc.data();
-          d['id'] = doc.id;
-          map[_s(d['jadwalId'])] = d;
-        }
-        sesiHariIni = map;
-      }
-
       setState(() => listJadwal = jadwal);
     } catch (e) {
       _snack("Gagal mengambil data: $e", Colors.red);
     }
     setState(() => isLoading = false);
-  }
-
-  // ══════════════════════════════════════════════
-  // HELPER TANGGAL & JAM (untuk fitur "Mulai Sesi")
-  // ══════════════════════════════════════════════
-  String _tanggalHariIni() {
-    final now = DateTime.now();
-    return "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
-  }
-
-  String _hariIniNama() {
-    const hariIndo = [
-      "Senin",
-      "Selasa",
-      "Rabu",
-      "Kamis",
-      "Jumat",
-      "Sabtu",
-      "Minggu",
-    ];
-    return hariIndo[DateTime.now().weekday - 1];
-  }
-
-  int? _menitDariString(String jam) {
-    final parts = jam.split(':');
-    if (parts.length != 2) return null;
-    final h = int.tryParse(parts[0].trim());
-    final m = int.tryParse(parts[1].trim());
-    if (h == null || m == null) return null;
-    return h * 60 + m;
-  }
-
-  // Boleh mulai sesi 15 menit sebelum jam mulai s/d jam selesai
-  bool _bisaMulaiSesi(String jamMulai, String jamSelesai) {
-    final now = DateTime.now();
-    final nowMenit = now.hour * 60 + now.minute;
-    final mulai = _menitDariString(jamMulai);
-    final selesai = _menitDariString(jamSelesai);
-    if (mulai == null || selesai == null) return false;
-    return nowMenit >= (mulai - 15) && nowMenit <= selesai;
-  }
-
-  Future<void> mulaiSesi(Map<String, dynamic> jadwal) async {
-    final jadwalId = jadwal['id'].toString();
-    setState(() => processingSesi.add(jadwalId));
-    try {
-      final now = DateTime.now();
-      final jamSekarang =
-          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
-      final docRef = await _firestore.collection('sesi_perkuliahan').add({
-        'jadwalId': jadwalId,
-        'mataKuliahNama': _s(jadwal['mataKuliahNama']),
-        'dosenId': widget.userId,
-        'dosenNama': _s(jadwal['dosenNama']),
-        'ruang': _s(jadwal['ruang']),
-        'tanggal': _tanggalHariIni(),
-        'jamMulaiAktual': jamSekarang,
-        'jamSelesaiAktual': null,
-        'status': 'berlangsung',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      _snack("Sesi mengajar dimulai pukul $jamSekarang", Colors.green);
-      setState(() {
-        sesiHariIni[jadwalId] = {
-          'id': docRef.id,
-          'status': 'berlangsung',
-          'jamMulaiAktual': jamSekarang,
-        };
-      });
-    } catch (e) {
-      _snack("Error: $e", Colors.red);
-    }
-    setState(() => processingSesi.remove(jadwalId));
-  }
-
-  Future<void> akhiriSesi(Map<String, dynamic> jadwal) async {
-    final jadwalId = jadwal['id'].toString();
-    final sesi = sesiHariIni[jadwalId];
-    if (sesi == null) return;
-
-    final ok =
-        await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            title: const Text("Akhiri Sesi Mengajar"),
-            content: Text(
-              "Akhiri sesi mengajar untuk ${_s(jadwal['mataKuliahNama'])} sekarang?",
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text("Batal"),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF3F51B5),
-                ),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text(
-                  "Ya, Akhiri",
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!ok) return;
-
-    setState(() => processingSesi.add(jadwalId));
-    try {
-      final now = DateTime.now();
-      final jamSekarang =
-          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
-      await _firestore
-          .collection('sesi_perkuliahan')
-          .doc(_s(sesi['id']))
-          .update({
-            'jamSelesaiAktual': jamSekarang,
-            'status': 'selesai',
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      _snack("Sesi mengajar diakhiri pukul $jamSekarang", Colors.green);
-      setState(() {
-        sesiHariIni[jadwalId] = {
-          ...sesi,
-          'status': 'selesai',
-          'jamSelesaiAktual': jamSekarang,
-        };
-      });
-    } catch (e) {
-      _snack("Error: $e", Colors.red);
-    }
-    setState(() => processingSesi.remove(jadwalId));
   }
 
   List<Map<String, dynamic>> get filtered {
@@ -286,7 +129,108 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
   }
 
   // ══════════════════════════════════════════════
-  // TAMBAH / EDIT JADWAL (admin only)
+  // LOGIKA WAKTU (STRICT TIME)
+  // ══════════════════════════════════════════════
+  int _hariToInt(String hari) {
+    switch (hari.toLowerCase()) {
+      case 'senin':
+        return 1;
+      case 'selasa':
+        return 2;
+      case 'rabu':
+        return 3;
+      case 'kamis':
+        return 4;
+      case 'jumat':
+        return 5;
+      case 'sabtu':
+        return 6;
+      case 'minggu':
+        return 7;
+      default:
+        return 0;
+    }
+  }
+
+  bool _isSesiAktif(String hari, String jamMulai, String jamSelesai) {
+    final now = DateTime.now();
+
+    // 1. Cek matching hari saat ini dengan jadwal
+    if (now.weekday != _hariToInt(hari)) return false;
+
+    try {
+      // Menangani variasi pemisah waktu baik menggunakan titik (.) maupun titik dua (:)
+      final startStr = jamMulai.replaceAll('.', ':');
+      final endStr = jamSelesai.replaceAll('.', ':');
+
+      final startParts = startStr.split(':');
+      final endParts = endStr.split(':');
+
+      final startHour = int.parse(startParts[0]);
+      final startMin = int.parse(startParts[1]);
+      final endHour = int.parse(endParts[0]);
+      final endMin = int.parse(endParts[1]);
+
+      final startTime = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        startHour,
+        startMin,
+      );
+      final endTime = DateTime(now.year, now.month, now.day, endHour, endMin);
+
+      // Sesi aktif jika waktu sekarang berada di dalam rentang jam tersebut
+      return (now.isAfter(startTime) || now.isAtSameMomentAs(startTime)) &&
+          (now.isBefore(endTime) || now.isAtSameMomentAs(endTime));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Navigasi masuk ke PresensiDosenPage dengan menyertakan ID dan Nama MK
+  void _mulaiSesi(Map<String, dynamic> item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PresensiDosenPage(
+          mataKuliahId: _s(item['mataKuliahId']),
+          mataKuliahNama: _s(item['mataKuliahNama']),
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════
+  // MATCHING DOSEN <-> BIDANG KEAHLIAN
+  // ══════════════════════════════════════════════
+  // Dosen dianggap "cocok" kalau nama mata kuliah mengandung kata dari
+  // bidang keahliannya, atau sebaliknya (pencocokan longgar, case-insensitive).
+  List<Map<String, dynamic>> _dosenCocok(String? mkId) {
+    if (mkId == null) return listDosen;
+    final mk = listMataKuliah.firstWhere(
+      (m) => m['id'] == mkId,
+      orElse: () => {},
+    );
+    final namaMk = _s(mk['namaMk']).toLowerCase().trim();
+    if (namaMk.isEmpty) return listDosen;
+
+    final cocok = listDosen.where((d) {
+      final bidang = _s(d['bidangKeahlian']).toLowerCase().trim();
+      if (bidang.isEmpty) return false;
+      if (bidang.contains(namaMk) || namaMk.contains(bidang)) return true;
+      // Cek per kata (biar "Desain Grafis" tetap match sama MK "Desain")
+      final kataMk = namaMk.split(RegExp(r'\s+'));
+      return kataMk.any((k) => k.length > 2 && bidang.contains(k));
+    }).toList();
+
+    // Kalau tidak ada yang cocok, tampilkan semua dosen (fallback)
+    // supaya admin tetap bisa menugaskan siapa saja secara manual.
+    return cocok.isNotEmpty ? cocok : listDosen;
+  }
+
+  // ══════════════════════════════════════════════
+  // TAMBAH / EDIT JADWAL (Admin Only)
   // ══════════════════════════════════════════════
   void showFormDialog({Map<String, dynamic>? item}) {
     final isEdit = item != null;
@@ -305,28 +249,9 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) {
-          // LOGIKA FILTER DOSEN:
-          // Ambil bidang keahlian dari mata kuliah yang sedang dipilih
-          List<Map<String, dynamic>> filteredDosen = listDosen;
-          if (selectedMkId != null) {
-            final mkTerpilih = listMataKuliah.firstWhere(
-              (mk) => mk['id'] == selectedMkId,
-              orElse: () => {},
-            );
-
-            // Asumsi field di database bernama 'bidangKeahlian'
-            final mkBidang = _s(mkTerpilih['bidangKeahlian']);
-
-            if (mkBidang.isNotEmpty) {
-              filteredDosen = listDosen
-                  .where(
-                    (d) =>
-                        _s(d['bidangKeahlian']).toLowerCase() ==
-                        mkBidang.toLowerCase(),
-                  )
-                  .toList();
-            }
-          }
+          final dosenTersedia = _dosenCocok(selectedMkId);
+          final adaBidangCocok =
+              selectedMkId != null && dosenTersedia.length != listDosen.length;
 
           return Dialog(
             shape: RoundedRectangleBorder(
@@ -360,7 +285,6 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                       ),
                       const Divider(height: 20),
 
-                      // DROPDOWN MATA KULIAH
                       DropdownButtonFormField<String>(
                         initialValue: selectedMkId,
                         decoration: _dec("Mata Kuliah", Icons.menu_book),
@@ -373,45 +297,58 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                             ),
                           );
                         }).toList(),
-                        onChanged: (v) {
-                          setDialogState(() {
-                            selectedMkId = v;
-                            // Reset dosen jika mata kuliah diganti
+                        onChanged: (v) => setDialogState(() {
+                          selectedMkId = v;
+                          // Reset dosen kalau pilihan lama tidak lagi
+                          // termasuk dalam daftar dosen yang cocok
+                          final tersedia = _dosenCocok(v);
+                          if (selectedDosenId != null &&
+                              !tersedia.any(
+                                (d) => d['id'] == selectedDosenId,
+                              )) {
                             selectedDosenId = null;
-                          });
-                        },
+                          }
+                        }),
                       ),
                       const SizedBox(height: 12),
 
-                      // DROPDOWN DOSEN PENGAMPU (TERFILTER)
                       DropdownButtonFormField<String>(
-                        value: selectedDosenId,
+                        initialValue: selectedDosenId,
                         decoration: _dec("Dosen Pengampu", Icons.school),
-                        items: filteredDosen.map((d) {
-                          String dNama = _s(d['nama']);
-                          String dBidang = _s(d['bidangKeahlian']);
-                          String labelText = dBidang.isNotEmpty
-                              ? "$dNama ($dBidang)"
-                              : dNama;
-
+                        items: dosenTersedia.map((d) {
+                          final bidang = _s(d['bidangKeahlian']);
                           return DropdownMenuItem(
                             value: d['id'].toString(),
                             child: Text(
-                              labelText,
+                              bidang.isNotEmpty
+                                  ? "${_s(d['nama'])} ($bidang)"
+                                  : _s(d['nama']),
                               overflow: TextOverflow.ellipsis,
                             ),
                           );
                         }).toList(),
                         onChanged: (v) =>
                             setDialogState(() => selectedDosenId = v),
-                        hint: Text(
-                          selectedMkId == null
-                              ? "Pilih Mata Kuliah dulu"
-                              : (filteredDosen.isEmpty
-                                    ? "Tidak ada dosen di bidang ini"
-                                    : "Pilih Dosen"),
-                        ),
                       ),
+                      if (adaBidangCocok) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          "Menampilkan dosen dengan bidang keahlian yang cocok untuk mata kuliah ini.",
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.green.shade700,
+                          ),
+                        ),
+                      ] else if (selectedMkId != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          "Tidak ada dosen dengan bidang keahlian yang cocok, menampilkan semua dosen.",
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.orange.shade700,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
 
                       DropdownButtonFormField<String>(
@@ -486,6 +423,7 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                                     final dosen = listDosen.firstWhere(
                                       (d) => d['id'] == selectedDosenId,
                                     );
+
                                     final ok = isEdit
                                         ? await update(
                                             id: item['id'].toString(),
@@ -509,8 +447,9 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                                             ruang: cRuang.text.trim(),
                                           );
                                     setDialogState(() => isSaving = false);
-                                    if (ok && dialogContext.mounted)
+                                    if (ok && dialogContext.mounted) {
                                       Navigator.pop(dialogContext);
+                                    }
                                   },
                             icon: isSaving
                                 ? const SizedBox(
@@ -677,7 +616,7 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                     )
                   : () => showFormDialog(),
               backgroundColor: const Color(0xFF3F51B5),
-              foregroundColor: Colors.white, // Teks & icon jadi putih
+              foregroundColor: Colors.white,
               icon: const Icon(Icons.add),
               label: const Text("Tambah Jadwal"),
             )
@@ -735,7 +674,6 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
   }
 
   Widget _buildList(List<Map<String, dynamic>> data) {
-    // Kelompokkan per hari biar enak dibaca
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (var item in data) {
       final hari = _s(item['hari']);
@@ -782,16 +720,21 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
   }
 
   Widget _jadwalCard(Map<String, dynamic> item) {
+    final bool isAktif = _isSesiAktif(
+      _s(item['hari']),
+      _s(item['jamMulai']),
+      _s(item['jamSelesai']),
+    );
+
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
@@ -887,166 +830,74 @@ class _PenjadwalanPageState extends State<PenjadwalanPage> {
                   ),
               ],
             ),
-            if (isDosen) _sesiSection(item),
-          ],
-        ),
+          ),
+
+          // FOOTER DOSEN: AKTIF TOMBOL JIKA WAKTU DAN HARI SESUAI
+          if (isDosen)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isAktif ? Colors.green.shade50 : Colors.grey.shade100,
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(12),
+                ),
+                border: Border(top: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      isAktif
+                          ? "Sesi kuliah sedang berlangsung"
+                          : "Sesi hanya bisa dibuka sesuai hari & jam jadwal",
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isAktif
+                            ? Colors.green.shade700
+                            : Colors.grey.shade600,
+                        fontWeight: isAktif
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 32,
+                    child: ElevatedButton.icon(
+                      onPressed: isAktif ? () => _mulaiSesi(item) : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isAktif
+                            ? const Color(0xFF3F51B5)
+                            : Colors.grey.shade300,
+                        foregroundColor: isAktif
+                            ? Colors.white
+                            : Colors.grey.shade500,
+                        elevation: isAktif ? 2 : 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      icon: Icon(
+                        Icons.play_circle_fill,
+                        size: 16,
+                        color: isAktif ? Colors.white : Colors.grey.shade500,
+                      ),
+                      label: Text(
+                        "Mulai Sesi",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isAktif ? Colors.white : Colors.grey.shade500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
-    );
-  }
-
-  // ══════════════════════════════════════════════
-  // BAGIAN TOMBOL SESI MENGAJAR (khusus dosen)
-  // ══════════════════════════════════════════════
-  Widget _sesiSection(Map<String, dynamic> item) {
-    final jadwalId = item['id'].toString();
-    final hariJadwal = _s(item['hari']);
-    final isHariIni = hariJadwal == _hariIniNama();
-    final sesi = sesiHariIni[jadwalId];
-    final isProcessing = processingSesi.contains(jadwalId);
-
-    Widget content;
-
-    if (!isHariIni) {
-      content = Row(
-        children: [
-          Icon(Icons.event_busy, size: 14, color: Colors.grey.shade400),
-          const SizedBox(width: 6),
-          Text(
-            "Jadwal ini bukan untuk hari ini",
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-          ),
-        ],
-      );
-    } else if (sesi != null && _s(sesi['status']) == 'selesai') {
-      content = Row(
-        children: [
-          const Icon(Icons.check_circle, size: 15, color: Color(0xFF2E7D32)),
-          const SizedBox(width: 6),
-          Text(
-            "Sesi selesai (${_s(sesi['jamMulaiAktual'])} - ${_s(sesi['jamSelesaiAktual'])})",
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF2E7D32),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      );
-    } else if (sesi != null && _s(sesi['status']) == 'berlangsung') {
-      content = Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2E7D32).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF2E7D32),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  "Sesi Berlangsung sejak ${_s(sesi['jamMulaiAktual'])}",
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    color: Color(0xFF2E7D32),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Spacer(),
-          SizedBox(
-            height: 32,
-            child: ElevatedButton.icon(
-              onPressed: isProcessing ? null : () => akhiriSesi(item),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              icon: isProcessing
-                  ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Icon(Icons.stop_circle_outlined, size: 15),
-              label: const Text("Akhiri Sesi", style: TextStyle(fontSize: 12)),
-            ),
-          ),
-        ],
-      );
-    } else {
-      final bisaMulai = _bisaMulaiSesi(
-        _s(item['jamMulai']),
-        _s(item['jamSelesai']),
-      );
-      content = Row(
-        children: [
-          Expanded(
-            child: Text(
-              bisaMulai
-                  ? "Sudah bisa dimulai"
-                  : "Sesi bisa dimulai 15 menit sebelum jam mulai",
-              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
-            ),
-          ),
-          SizedBox(
-            height: 32,
-            child: ElevatedButton.icon(
-              onPressed: (!bisaMulai || isProcessing)
-                  ? null
-                  : () => mulaiSesi(item),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2E7D32),
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: Colors.grey.shade300,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              icon: isProcessing
-                  ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Icon(Icons.play_circle_outline, size: 15),
-              label: const Text("Mulai Sesi", style: TextStyle(fontSize: 12)),
-            ),
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 10),
-        const Divider(height: 1),
-        const SizedBox(height: 10),
-        content,
-      ],
     );
   }
 
