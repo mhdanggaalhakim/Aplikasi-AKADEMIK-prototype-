@@ -14,10 +14,12 @@ class NilaiPage extends StatefulWidget {
 class _NilaiPageState extends State<NilaiPage> {
   final _firestore = FirebaseFirestore.instance;
 
-  List<Map<String, dynamic>> listNilai = [];
   List<Map<String, dynamic>> listMahasiswa = [];
   List<Map<String, dynamic>> listMataKuliah =
       []; // untuk dosen: cuma mk yg diampu
+  Set<String> allowedMkIds = {}; // Menyimpan ID MK yang diampu dosen
+
+  Stream<QuerySnapshot>? _nilaiStream;
 
   bool isLoading = true;
   bool isSaving = false;
@@ -31,44 +33,42 @@ class _NilaiPageState extends State<NilaiPage> {
   @override
   void initState() {
     super.initState();
-    getData();
+    initData();
   }
 
   String _s(dynamic v) => (v ?? '').toString();
   num _n(dynamic v) => v is num ? v : (num.tryParse(_s(v)) ?? 0);
 
-  Future<void> getData() async {
+  // Fungsi initData() menyiapkan data pendukung (Mhs, MK, Jadwal) dan menginisialisasi Stream
+  Future<void> initData() async {
     setState(() => isLoading = true);
     try {
-      // Dosen hanya boleh melihat & input nilai utk mata kuliah yg dia ampu
-      // (dicek dari jadwal mengajarnya), dihitung DULU sebelum ambil nilai.
-      Set<String> allowedMkIds = {};
-
       if (canInput) {
+        // Ambil data Mahasiswa
         final mhsSnap = await _firestore
             .collection('users')
             .where('role', isEqualTo: 'mahasiswa')
             .where('isActive', isEqualTo: true)
             .get();
-        listMahasiswa = mhsSnap.docs.map((doc) {
-          final data = doc.data();
-          data['id'] = doc.id;
-          return data;
-        }).toList();
+        listMahasiswa = mhsSnap.docs
+            .map((doc) => {...doc.data(), 'id': doc.id})
+            .toList();
 
         if (isAdmin) {
+          // Admin bebas akses semua MK
           final mkSnap = await _firestore.collection('mata_kuliah').get();
-          listMataKuliah = mkSnap.docs.map((doc) {
-            final data = doc.data();
-            data['id'] = doc.id;
-            return data;
-          }).toList();
+          listMataKuliah = mkSnap.docs
+              .map((doc) => {...doc.data(), 'id': doc.id})
+              .toList();
         } else if (isDosen && widget.userId != null) {
+          // Dosen difilter berdasarkan Jadwal
           final jadwalSnap = await _firestore
               .collection('jadwal')
               .where('dosenId', isEqualTo: widget.userId)
               .get();
           final mkMap = <String, Map<String, dynamic>>{};
+          allowedMkIds.clear();
+
           for (var doc in jadwalSnap.docs) {
             final d = doc.data();
             final id = _s(d['mataKuliahId']);
@@ -85,40 +85,16 @@ class _NilaiPageState extends State<NilaiPage> {
         }
       }
 
-      Query<Map<String, dynamic>> q = _firestore.collection('nilai');
+      // Siapkan aliran data REAL-TIME (Sinkronisasi Otomatis)
+      Query q = _firestore.collection('nilai');
       if (isMahasiswa && widget.userId != null) {
         q = q.where('mahasiswaId', isEqualTo: widget.userId);
       }
-      final nilaiSnap = await q.get();
-      var nilai = nilaiSnap.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        return data;
-      }).toList();
-
-      // Filter di sisi client: dosen hanya lihat nilai mata kuliah yg dia ampu
-      if (isDosen) {
-        nilai = nilai
-            .where((n) => allowedMkIds.contains(_s(n['mataKuliahId'])))
-            .toList();
-      }
-
-      nilai.sort(
-        (a, b) => _s(a['mahasiswaNama']).compareTo(_s(b['mahasiswaNama'])),
-      );
-      setState(() => listNilai = nilai);
+      _nilaiStream = q.snapshots();
     } catch (e) {
       _snack("Gagal mengambil data: $e", Colors.red);
     }
     setState(() => isLoading = false);
-  }
-
-  List<Map<String, dynamic>> get filtered {
-    if (keyword.isEmpty) return listNilai;
-    return listNilai.where((n) {
-      return _s(n['mahasiswaNama']).toLowerCase().contains(keyword) ||
-          _s(n['mataKuliahNama']).toLowerCase().contains(keyword);
-    }).toList();
   }
 
   void _snack(String msg, Color color) {
@@ -191,7 +167,7 @@ class _NilaiPageState extends State<NilaiPage> {
                       children: [
                         Icon(
                           isEdit ? Icons.edit : Icons.add_box,
-                          color: const Color(0xFF2E7D32),
+                          color: const Color(0xFF3F51B5),
                         ),
                         const SizedBox(width: 8),
                         Text(
@@ -277,7 +253,7 @@ class _NilaiPageState extends State<NilaiPage> {
                         const SizedBox(width: 8),
                         ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF2E7D32),
+                            backgroundColor: const Color(0xFF3F51B5),
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
@@ -307,6 +283,7 @@ class _NilaiPageState extends State<NilaiPage> {
                                       'namaMk': _s(item?['mataKuliahNama']),
                                     },
                                   );
+
                                   final ok = isEdit
                                       ? await update(
                                           id: item['id'].toString(),
@@ -323,6 +300,7 @@ class _NilaiPageState extends State<NilaiPage> {
                                           uts: cUts.text.trim(),
                                           uas: cUas.text.trim(),
                                         );
+
                                   setDialogState(() => isSaving = false);
                                   if (ok && dialogContext.mounted)
                                     Navigator.pop(dialogContext);
@@ -403,7 +381,7 @@ class _NilaiPageState extends State<NilaiPage> {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       _snack("Nilai berhasil disimpan", Colors.green);
-      getData();
+      // Tidak perlu getData() lagi karena kita pakai StreamBuilder
       return true;
     } catch (e) {
       _snack("Error: $e", Colors.red);
@@ -435,7 +413,7 @@ class _NilaiPageState extends State<NilaiPage> {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       _snack("Nilai berhasil diupdate", Colors.green);
-      getData();
+      // Sinkron real-time, tidak perlu panggil getData()
       return true;
     } catch (e) {
       _snack("Error: $e", Colors.red);
@@ -478,7 +456,6 @@ class _NilaiPageState extends State<NilaiPage> {
     try {
       await _firestore.collection('nilai').doc(id).delete();
       _snack("Nilai berhasil dihapus", Colors.green);
-      getData();
     } catch (e) {
       _snack("Error: $e", Colors.red);
     }
@@ -487,8 +464,9 @@ class _NilaiPageState extends State<NilaiPage> {
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 800;
-    final data = filtered;
-    final title = isMahasiswa ? "Nilai / Transkrip" : "Nilai";
+    final title = isMahasiswa
+        ? "Nilai / Transkrip"
+        : (isDosen ? "Input Nilai" : "Data Nilai");
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F8),
@@ -498,7 +476,7 @@ class _NilaiPageState extends State<NilaiPage> {
         title: Text(title),
         elevation: 0,
         actions: [
-          IconButton(onPressed: getData, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: initData, icon: const Icon(Icons.refresh)),
         ],
       ),
       floatingActionButton: canInput
@@ -506,67 +484,138 @@ class _NilaiPageState extends State<NilaiPage> {
               onPressed: (listMahasiswa.isEmpty || listMataKuliah.isEmpty)
                   ? () => _snack(
                       isDosen
-                          ? "Kamu belum ditugaskan mengajar mata kuliah apapun (cek Penjadwalan)"
-                          : "Tambahkan Data Mahasiswa & Mata Kuliah dulu",
+                          ? "Kamu belum ditugaskan mengajar mata kuliah apapun"
+                          : "Tambahkan Data Mahasiswa & MK dulu",
                       Colors.orange,
                     )
                   : () => showFormDialog(),
-              backgroundColor: const Color(0xFF2E7D32),
+              backgroundColor: const Color(0xFF3F51B5),
+              foregroundColor: Colors.white,
               icon: const Icon(Icons.add),
               label: const Text("Input Nilai"),
             )
           : null,
-      body: Column(
-        children: [
-          Container(
-            color: const Color(0xFF3F51B5),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: Column(
-              children: [
-                if (isMahasiswa) _ipkChip(data),
-                if (!isMahasiswa)
-                  Row(
-                    children: [
-                      _statChip(Icons.grade, "${listNilai.length}", "Total"),
-                      const SizedBox(width: 8),
-                      _statChip(Icons.search, "${data.length}", "Ditampilkan"),
-                    ],
-                  ),
-                const SizedBox(height: 10),
-                TextField(
-                  onChanged: (v) => setState(() => keyword = v.toLowerCase()),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: isMahasiswa
-                        ? "Cari mata kuliah..."
-                        : "Cari mahasiswa, mata kuliah...",
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
-                    prefixIcon: const Icon(Icons.search, color: Colors.white),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.15),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: isLoading
-                ? const Center(
+      // Menggunakan StreamBuilder agar SINKRON OTOMATIS REAL-TIME
+      body: isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF3F51B5)),
+            )
+          : StreamBuilder<QuerySnapshot>(
+              stream: _nilaiStream,
+              builder: (context, snapshot) {
+                if (snapshot.hasError)
+                  return const Center(child: Text("Terjadi Kesalahan"));
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
                     child: CircularProgressIndicator(color: Color(0xFF3F51B5)),
-                  )
-                : data.isEmpty
-                ? _buildEmpty()
-                : isWide
-                ? _buildTable(data)
-                : _buildCardList(data),
-          ),
-        ],
-      ),
+                  );
+                }
+
+                // Parse Data dari Stream
+                var allNilai = snapshot.data!.docs
+                    .map(
+                      (doc) => {
+                        ...doc.data() as Map<String, dynamic>,
+                        'id': doc.id,
+                      },
+                    )
+                    .toList();
+
+                // Filter Dosen
+                if (isDosen) {
+                  allNilai = allNilai
+                      .where(
+                        (n) => allowedMkIds.contains(_s(n['mataKuliahId'])),
+                      )
+                      .toList();
+                }
+
+                allNilai.sort(
+                  (a, b) =>
+                      _s(a['mahasiswaNama']).compareTo(_s(b['mahasiswaNama'])),
+                );
+
+                // Filter Keyword (Pencarian)
+                var filteredData = allNilai;
+                if (keyword.isNotEmpty) {
+                  filteredData = allNilai
+                      .where(
+                        (n) =>
+                            _s(
+                              n['mahasiswaNama'],
+                            ).toLowerCase().contains(keyword) ||
+                            _s(
+                              n['mataKuliahNama'],
+                            ).toLowerCase().contains(keyword),
+                      )
+                      .toList();
+                }
+
+                return Column(
+                  children: [
+                    Container(
+                      color: const Color(0xFF3F51B5),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+                      child: Column(
+                        children: [
+                          if (isMahasiswa) _ipkChip(filteredData),
+                          if (!isMahasiswa)
+                            Row(
+                              children: [
+                                _statChip(
+                                  Icons.grade,
+                                  "${allNilai.length}",
+                                  "Total",
+                                ),
+                                const SizedBox(width: 8),
+                                _statChip(
+                                  Icons.search,
+                                  "${filteredData.length}",
+                                  "Ditampilkan",
+                                ),
+                              ],
+                            ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            onChanged: (v) =>
+                                setState(() => keyword = v.toLowerCase()),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              hintText: isMahasiswa
+                                  ? "Cari mata kuliah..."
+                                  : "Cari mahasiswa, mata kuliah...",
+                              hintStyle: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                              ),
+                              prefixIcon: const Icon(
+                                Icons.search,
+                                color: Colors.white,
+                              ),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.15),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 0,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: filteredData.isEmpty
+                          ? _buildEmpty()
+                          : isWide
+                          ? _buildTable(filteredData)
+                          : _buildCardList(filteredData),
+                    ),
+                  ],
+                );
+              },
+            ),
     );
   }
 
@@ -626,6 +675,7 @@ class _NilaiPageState extends State<NilaiPage> {
                     final rowColor = i % 2 == 0
                         ? Colors.white
                         : const Color(0xFFF5F6FF);
+
                     return Container(
                       color: rowColor,
                       padding: const EdgeInsets.symmetric(
@@ -932,7 +982,10 @@ class _NilaiPageState extends State<NilaiPage> {
   InputDecoration _dec(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      prefixIcon: Icon(icon, color: const Color(0xFF2E7D32)),
+      prefixIcon: Icon(
+        icon,
+        color: const Color(0xFF3F51B5),
+      ), // Warna diseragamkan
       border: const OutlineInputBorder(
         borderRadius: BorderRadius.all(Radius.circular(10)),
       ),
